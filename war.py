@@ -42,21 +42,76 @@ class Result(Enum):
     DRAW = 1
     LOSE = 2
 
+def run_game(game):
+    try:
+        # Step 1: Both clients must send WANTGAME
+        msg1 = readexactly(game.p1, 2)
+        msg2 = readexactly(game.p2, 2)
+        if msg1[0] != Command.WANTGAME.value or msg2[0] != Command.WANTGAME.value:
+            raise ValueError("Bad command received")
+
+        # Step 2: Deal and send GAMESTART + 26 cards to each player
+        hand1, hand2 = deal_cards()
+
+        game.p1.sendall(bytes([Command.GAMESTART.value]) + bytes(hand1))
+        game.p2.sendall(bytes([Command.GAMESTART.value]) + bytes(hand2))
+
+        # Step 3: Play 26 rounds
+        for i in range(26):
+            # Read one card from each
+            move1 = readexactly(game.p1, 2)
+            move2 = readexactly(game.p2, 2)
+
+            if move1[0] != Command.PLAYCARD.value or move2[0] != Command.PLAYCARD.value:
+                raise ValueError("Bad play command")
+
+            card1 = move1[1]
+            card2 = move2[1]
+
+            result = compare_cards(card1, card2)
+
+            if result == 1:
+                game.p1.sendall(bytes([Command.PLAYRESULT.value, Result.WIN.value]))
+                game.p2.sendall(bytes([Command.PLAYRESULT.value, Result.LOSE.value]))
+            elif result == -1:
+                game.p1.sendall(bytes([Command.PLAYRESULT.value, Result.LOSE.value]))
+                game.p2.sendall(bytes([Command.PLAYRESULT.value, Result.WIN.value]))
+            else:
+                game.p1.sendall(bytes([Command.PLAYRESULT.value, Result.DRAW.value]))
+                game.p2.sendall(bytes([Command.PLAYRESULT.value, Result.DRAW.value]))
+
+    except Exception as e:
+        logging.error(f"Game error: {e}")
+        kill_game(game)
+
 def readexactly(sock, numbytes):
     """
     Accumulate exactly `numbytes` from `sock` and return those. If EOF is found
     before numbytes have been received, be sure to account for that here or in
     the caller.
     """
-    # TODO
-    pass
+    data = b""
+    while len(data) < numbytes:
+        chunk = sock.recv(numbytes - len(data))
+        if not chunk:
+            raise ConnectionError
+        data += chunk
+
+    return data
 
 
 def kill_game(game):
     """
-    TODO: If either client sends a bad message, immediately nuke the game.
+    If either client sends a bad message, immediately nuke the game.
     """
-    pass
+    try:
+        game.p1.close()
+    except Exception:
+        pass
+    try:
+        game.p1.close()
+    except Exception:
+        pass
 
 
 def compare_cards(card1, card2):
@@ -64,7 +119,17 @@ def compare_cards(card1, card2):
     TODO: Given an integer card representation, return -1 for card1 < card2,
     0 for card1 = card2, and 1 for card1 > card2
     """
-    pass
+    card1_rank = card1 % 13
+    card2_rank = card2 % 13
+
+    if (card1_rank < card2_rank):
+        return -1
+    elif (card1_rank > card2_rank):
+        return 1
+    else:
+        return 0
+    
+
     
 
 def deal_cards():
@@ -72,16 +137,45 @@ def deal_cards():
     TODO: Randomize a deck of cards (list of ints 0..51), and return two
     26 card "hands."
     """
-    pass
-    
+    cards = list(range(52))
+    random.shuffle(cards)
+    hand1 = cards[:26]
+    hand2 = cards[26:]
+
+    return hand1, hand2
+
 
 def serve_game(host, port):
     """
     TODO: Open a socket for listening for new connections on host:port, and
     perform the war protocol to serve a game of war between each client.
     This function should run forever, continually serving clients.
+
+    1. Open socket
+    2. If 2 or more players are connected, create a game 
+    3. Thread
+
     """
-    pass
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_sock:
+        server_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_sock.bind((host, port))
+        server_sock.listen()
+
+        while True:
+                print("Waiting for Player 1...")
+                p1, addr1 = server_sock.accept()
+                print(f"Player 1 connected from {addr1}")
+
+                print("Waiting for Player 2...")
+                p2, addr2 = server_sock.accept()
+                print(f"Player 2 connected from {addr2}")
+
+                game = Game(p1, p2)
+                print("game start")
+                run_game(game)
+                
+                
+    
     
 
 async def limit_client(host, port, loop, sem):
